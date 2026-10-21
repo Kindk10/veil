@@ -19,9 +19,9 @@ struct CallView: View {
         VStack(spacing: 16) {
             if videoOn {
                 ZStack(alignment: .topTrailing) {
-                    remoteView.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Group { remoteView }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.black)
-                    localView.frame(width: 110, height: 160).padding(12)
+                    Group { localView }.frame(width: 110, height: 160).padding(12)
                 }
             } else {
                 Spacer()
