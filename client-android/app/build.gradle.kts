@@ -14,6 +14,20 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
+    signingConfigs {
+        create("release") {
+            storeFile = file("../veil-release.keystore")
+            storePassword = "VEILkey2026"
+            keyAlias = "veil"
+            keyPassword = "VEILkey2026"
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
