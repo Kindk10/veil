@@ -15,6 +15,47 @@ object MsgType {
     const val STATUS = "status" // адресная история, автосгорание 24 ч
     const val REACTION = "reaction"
     const val FORWARD = "forward"
+    const val CALL_OFFER = "call_offer"
+    const val CALL_ANSWER = "call_answer"
+    const val CALL_ICE = "call_ice"
+    const val CALL_END = "call_end"
+}
+
+/** Группа: {gid, members[]} — отправка идёт каждому участнику отдельным E2E-конвертом. */
+object Group {
+    fun id(): String = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+
+    fun meta(gid: String, name: String, members: List<String>): String = JSONObject()
+        .put("type", "group_meta").put("gid", gid).put("name", name)
+        .put("members", org.json.JSONArray(members)).toString()
+
+    fun msg(gid: String, body: String): String = JSONObject()
+        .put("type", MsgType.TEXT).put("gid", gid).put("body", body).toString()
+
+    fun media(gid: String, type: String, name: String, bytes: ByteArray): String =
+        JSONObject(Envelope.media(type, name, bytes)).put("gid", gid).toString()
+}
+
+/** Звонок: сигналинг идёт через реле тем же зашифрованным конвертом. */
+object CallSignal {
+    fun offer(sdp: String): String = JSONObject()
+        .put("type", MsgType.CALL_OFFER).put("sdp", sdp).toString()
+
+    fun answer(sdp: String): String = JSONObject()
+        .put("type", MsgType.CALL_ANSWER).put("sdp", sdp).toString()
+
+    fun ice(candidate: String, mid: String): String = JSONObject()
+        .put("type", MsgType.CALL_ICE).put("cand", candidate).put("mid", mid).toString()
+
+    fun end(reason: String): String = JSONObject()
+        .put("type", MsgType.CALL_END).put("reason", reason).toString()
+}
+
+/** Статус — адресная история, автосгорание 24 ч (серверный TTL конвертов). */
+object Status {
+    fun set(text: String): String = JSONObject()
+        .put("type", MsgType.STATUS).put("body", text)
+        .put("exp", System.currentTimeMillis() / 1000 + 86_400).toString()
 }
 
 object Envelope {

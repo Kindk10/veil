@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 
 val VeilGreen = Color(0xFF4AE28B)
@@ -88,6 +90,9 @@ sealed class Screen {
     object Unlock : Screen()
     object Chats : Screen()
     data class Chat(val peer: String) : Screen()
+    data class Group(val gid: String) : Screen()
+    object NewGroup : Screen()
+    data class Call(val peer: String) : Screen()
     object Settings : Screen()
 }
 
@@ -101,8 +106,13 @@ fun Root() {
         is Screen.Unlock -> UnlockScreen { screen = Screen.Chats }
         is Screen.Chats -> ChatsScreen(
             onOpen = { screen = Screen.Chat(it) },
+            onOpenGroup = { screen = Screen.Group(it) },
+            onNewGroup = { screen = Screen.NewGroup },
             onSettings = { screen = Screen.Settings })
-        is Screen.Chat -> ChatScreen(s.peer) { screen = Screen.Chats }
+        is Screen.Chat -> ChatScreen(s.peer, onCall = { screen = Screen.Call(it) }) { screen = Screen.Chats }
+        is Screen.Group -> GroupChatScreen(s.gid) { screen = Screen.Chats }
+        is Screen.NewGroup -> NewGroupScreen { screen = Screen.Chats }
+        is Screen.Call -> CallScreen(s.peer) { screen = Screen.Chat(s.peer) }
         is Screen.Settings -> SettingsScreen { screen = Screen.Chats }
     }
 }
@@ -203,7 +213,7 @@ fun Avatar(name: String) {
 }
 
 @Composable
-fun ChatsScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
+fun ChatsScreen(onOpen: (String) -> Unit, onOpenGroup: (String) -> Unit, onNewGroup: () -> Unit, onSettings: () -> Unit) {
     var chats by remember { mutableStateOf(listOf<ChatEntry>()) }
     var query by remember { mutableStateOf("") }
     var found by remember { mutableStateOf<String?>(null) }
@@ -236,8 +246,10 @@ fun ChatsScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                 value = query, onValueChange = { query = it },
                 label = { Text("Найти по юзернейму") },
                 trailingIcon = {
-                    TextButton(onClick = { scope.launch {
+                    TextButton(onClick = {
+                    scope.launch {
                         val r = VeilApp.api()?.lookup(query.lowercase())
+                        r?.idHash?.let { VeilApp.prefs.edit().putString("id_${query.lowercase()}", it).apply() }
                         found = r?.idHash
                     } }) { Text("Найти", color = VeilGreen) }
                 },
@@ -253,6 +265,22 @@ fun ChatsScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                     }
                     Spacer(Modifier.weight(1f))
                     Button(onClick = { onOpen(query) }) { Text("Написать") }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(onClick = onNewGroup, modifier = Modifier.fillMaxWidth()) {
+                Text("👥 Новая группа", color = VeilGreen)
+            }
+            loadGroups().forEach { g ->
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                        .background(VeilSurface, RoundedCornerShape(12.dp))
+                        .clickable { onOpenGroup(g.gid) }.padding(10.dp)) {
+                    Text("👥", fontSize = 22.sp)
+                    Column(Modifier.padding(start = 10.dp)) {
+                        Text(g.name, color = VeilText, fontWeight = FontWeight.SemiBold)
+                        Text("${g.members.size} участников", color = VeilTextDim, fontSize = 12.sp)
+                    }
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -297,7 +325,7 @@ fun ChatsScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
 data class UiMsg(val dir: String, val text: String, val kind: String = veil.core.MsgType.TEXT, val name: String? = null)
 
 @Composable
-fun ChatScreen(peer: String, onBack: () -> Unit) {
+fun ChatScreen(peer: String, onCall: (String) -> Unit, onBack: () -> Unit) {
     val t = VeilThemes.current
     var messages by remember { mutableStateOf(listOf(
         UiMsg("in", "Соединение установлено. Конец-в-конец шифрование активно."))) }
@@ -315,7 +343,7 @@ fun ChatScreen(peer: String, onBack: () -> Unit) {
                 val json = veil.core.Envelope.media(veil.core.MsgType.IMAGE, name, bytes)
                 messages = messages + listOf(UiMsg("out", "🖼 [изображение ${bytes.size / 1024} КБ]", veil.core.MsgType.IMAGE, name))
                 scope.launch {
-                    val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                    val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
                     if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
                 }
             }
@@ -330,8 +358,63 @@ fun ChatScreen(peer: String, onBack: () -> Unit) {
                 val json = veil.core.Envelope.media(veil.core.MsgType.FILE, name, bytes)
                 messages = messages + listOf(UiMsg("out", "📎 [файл ${bytes.size / 1024} КБ]", veil.core.MsgType.FILE, name))
                 scope.launch {
-                    val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                    val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
                     if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+                }
+            }
+        }
+    }
+
+    // Голосовое: MediaRecorder → AAC. Период: нажали 🎤 — идёт запись, нажали ещё раз — отправка.
+    var recording by remember { mutableStateOf(false) }
+    var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    var recStart by remember { mutableStateOf(0L) }
+    val micPerm = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) recording = !recording
+    }
+    // Кружок: фронтальная камера через TakePicturePreview (без FileProvider).
+    val captureCircle = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicturePreview()) { bmp ->
+        if (bmp != null) {
+            val bos = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, bos)
+            val bytes = bos.toByteArray()
+            val json = veil.core.Envelope.media(veil.core.MsgType.VIDEO_NOTE, "circle.jpg", bytes)
+            messages = messages + listOf(UiMsg("out", "⭕ [кружок ${bytes.size / 1024} КБ]", veil.core.MsgType.VIDEO_NOTE))
+            scope.launch {
+                val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
+                if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+            }
+        }
+    }
+
+    LaunchedEffect(recording) {
+        if (recording) {
+            val file = java.io.File(VeilApp.context!!.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
+            val r = if (android.os.Build.VERSION.SDK_INT >= 31) android.media.MediaRecorder(VeilApp.context!!)
+            else @Suppress("DEPRECATION") android.media.MediaRecorder()
+            r.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            r.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            r.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            r.setOutputFile(file.absolutePath)
+            r.prepare(); r.start()
+            recorder = r; recStart = System.currentTimeMillis()
+        } else {
+            val r = recorder
+            if (r != null) {
+                r.stop(); r.release(); recorder = null
+                val secs = ((System.currentTimeMillis() - recStart) / 1000).toInt()
+                val file: java.io.File? = VeilApp.context!!.cacheDir
+                    .listFiles { f: java.io.File -> f.name.startsWith("voice_") }?.maxByOrNull { it.lastModified() }
+                if (file != null) {
+                    val bytes = file.readBytes()
+                    val json = veil.core.Envelope.media(veil.core.MsgType.VOICE, "voice.m4a", bytes)
+                    messages = messages + listOf(UiMsg("out", "🎤 [голосовое ${secs} с]", veil.core.MsgType.VOICE))
+                    scope.launch {
+                        val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
+                        if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+                    }
                 }
             }
         }
@@ -343,8 +426,12 @@ fun ChatScreen(peer: String, onBack: () -> Unit) {
             TextButton(onClick = onBack) { Text("←", color = t.accent, fontSize = 22.sp) }
             Avatar(peer)
             Column(Modifier.padding(start = 10.dp)) {
-                Text(peer, color = t.text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                    Text(peer, color = t.text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                 Text("E2E · Double Ratchet", color = t.accent, fontSize = 11.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { onCall(peer) }) {
+                Text("📞", fontSize = 20.sp, color = t.accent)
             }
         }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 10.dp), state = listState) {
@@ -367,9 +454,17 @@ fun ChatScreen(peer: String, onBack: () -> Unit) {
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
                 Text("🖼", fontSize = 20.sp, color = t.textDim)
             }
+            TextButton(onClick = { pickFile.launch(arrayOf("*/*")) }) { Text("📎", fontSize = 20.sp, color = t.textDim) }
             TextButton(onClick = {
-                pickFile.launch(arrayOf("*/*"))
-            }) { Text("📎", fontSize = 20.sp, color = t.textDim) }
+                if (ContextCompat.checkSelfPermission(VeilApp.context!!,
+                        android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    recording = !recording
+                else micPerm.launch(android.Manifest.permission.RECORD_AUDIO)
+            }) { Text(if (recording) "⏺" else "🎤", fontSize = 20.sp,
+                color = if (recording) Color(0xFFE2574A) else t.textDim) }
+            TextButton(onClick = {
+                captureCircle.launch(null)
+            }) { Text("⭕", fontSize = 20.sp, color = t.textDim) }
             OutlinedTextField(
                 value = input, onValueChange = { input = it },
                 placeholder = { Text("Сообщение…", color = t.textDim) },
@@ -383,7 +478,7 @@ fun ChatScreen(peer: String, onBack: () -> Unit) {
                         val json = veil.core.Envelope.text(input)
                         input = ""
                         scope.launch {
-                            val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                            val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
                             if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла (проверьте транспорт)"))
                         }
                         scope.launch { listState.animateScrollToItem(messages.size - 1) }
@@ -405,6 +500,30 @@ fun SettingsScreen(onBack: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("←", color = VeilGreen, fontSize = 22.sp) }
             Text("Настройки", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = VeilText)
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Card(colors = CardDefaults.cardColors(containerColor = VeilSurface)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Статус (адресная история, сгорает через 24 ч)", color = VeilText, fontWeight = FontWeight.SemiBold)
+                var status by remember { mutableStateOf(VeilApp.prefs.getString("status", "") ?: "") }
+                OutlinedTextField(value = status, onValueChange = { if (it.length <= 120) status = it },
+                    placeholder = { Text("Чем занят?", color = VeilTextDim) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                Row {
+                    Button(onClick = {
+                        VeilApp.prefs.edit().putString("status", status).apply()
+                        if (status.isNotBlank()) scope.launch {
+                            loadGroups().forEach { g ->
+                                g.members.forEach { m ->
+                                    VeilApp.api()?.send(VeilApp.resolveId(m),
+                                        veil.core.Status.set(status).toByteArray())
+                                }
+                            }
+                        }
+                    }) { Text("Сохранить и отправить контактам") }
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -485,6 +604,9 @@ object VeilApp {
 
     val prefs: android.content.SharedPreferences
         get() = context!!.getSharedPreferences("veil_ui", android.content.Context.MODE_PRIVATE)
+
+    fun resolveId(username: String): String =
+        prefs.getString("id_$username", "") ?: ""
 
     fun api(): veil.core.VeilApi? {
         val s = sessionStore ?: return null
