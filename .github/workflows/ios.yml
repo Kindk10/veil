@@ -18,7 +18,7 @@ jobs:
       - name: WebRTC framework (stasel prebuilt)
         working-directory: client-ios
         run: |
-          url=$(curl -s https://api.github.com/repos/stasel/WebRTC/releases/latest | python3 -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next(a['browser_download_url'] for a in assets if 'xcframework' in a['name']))")
+          url=$(curl -s https://api.github.com/repos/stasel/WebRTC/releases | python3 -c "import json,sys; rels=json.load(sys.stdin); print(next(a['browser_download_url'] for r in rels for a in r.get('assets',[]) if 'xcframework' in a['name']))")
           curl -L -o webrtc.zip "$url"
           unzip -q webrtc.zip
           ls WebRTC.xcframework
