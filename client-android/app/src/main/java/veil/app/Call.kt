@@ -24,17 +24,19 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import org.webrtc.*
 import veil.core.Envelope
 
-// Одиночный глобальный_PEER для входящих ICE.
+// Состояние звонков: входящий оффер (peer → sdp), колбэк ответа.
 object CallState {
     @Volatile var activePeer: String? = null
-    @Volatile var answerAction: ((String) -> Unit)? = null // колбэк из чата/списка при входящем
+    @Volatile var answerAction: ((String) -> Unit)? = null
+    @Volatile var pendingOffer: Pair<String, String>? = null // (peer, sdp offer)
 }
 
 @Composable
-fun CallScreen(peer: String, video: Boolean = false, onEnd: () -> Unit) {
+fun CallScreen(peer: String, video: Boolean = false, answerSdp: String? = null, onEnd: () -> Unit) {
     val t = VeilThemes.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -158,16 +160,45 @@ fun CallScreen(peer: String, video: Boolean = false, onEnd: () -> Unit) {
                     conn.addTrack(vt, listOf("stream0"))
                 }
             }
-            conn.createOffer(obs, MediaConstraints())
+            if (answerSdp == null) conn.createOffer(obs, MediaConstraints())
         }
-        // Ответ и ICE от собеседника приходят через polling VeilApi — хук ниже.
-        CallState.answerAction = { sdp ->
+        if (answerSdp != null) {
+            // Входящий: ставим оффер, отвечаем своим answer'ом, дальше — обычный ICE.
             pc?.setRemoteDescription(object : SdpObserver {
                 override fun onCreateSuccess(sdp: SessionDescription?) {}
-                override fun onSetSuccess() { state = "Соединение…" }
+                override fun onSetSuccess() {}
                 override fun onCreateFailure(p0: String?) {}
+                override fun onSetFailure(p0: String?) { state = "Ошибка оффера" }
+            }, SessionDescription(SessionDescription.Type.OFFER, answerSdp))
+            val ansObs = object : SdpObserver {
+                override fun onCreateSuccess(sdp: SessionDescription) {
+                    pc?.setLocalDescription(object : SdpObserver {
+                        override fun onCreateSuccess(sdp: SessionDescription?) {}
+                        override fun onSetSuccess() {}
+                        override fun onCreateFailure(p0: String?) {}
+                        override fun onSetFailure(p0: String?) {}
+                    }, sdp)
+                    scope.launch {
+                        VeilApp.api()?.send(VeilApp.resolveId(peer),
+                            veil.core.CallSignal.answer(sdp.description).toByteArray())
+                    }
+                    state = "Соединение…"
+                }
+                override fun onSetSuccess() {}
+                override fun onCreateFailure(p0: String?) { state = "Ошибка ответа" }
                 override fun onSetFailure(p0: String?) { state = "Ошибка ответа" }
-            }, SessionDescription(SessionDescription.Type.ANSWER, sdp))
+            }
+            pc?.createAnswer(ansObs, MediaConstraints())
+        } else {
+            // Исходящий: ждём answer от собеседника.
+            CallState.answerAction = { sdp ->
+                pc?.setRemoteDescription(object : SdpObserver {
+                    override fun onCreateSuccess(sdp: SessionDescription?) {}
+                    override fun onSetSuccess() { state = "Соединение…" }
+                    override fun onCreateFailure(p0: String?) {}
+                    override fun onSetFailure(p0: String?) { state = "Ошибка ответа" }
+                }, SessionDescription(SessionDescription.Type.ANSWER, sdp))
+            }
         }
     }
 
@@ -213,6 +244,49 @@ fun CallScreen(peer: String, video: Boolean = false, onEnd: () -> Unit) {
                 shape = CircleShape) {
                 Text("Завершить")
             }
+        }
+    }
+}
+
+@Composable
+fun IncomingCallScreen(onAnswer: (String, String) -> Unit, onDecline: (String) -> Unit) {
+    val t = VeilThemes.current
+    val ctx = LocalContext.current
+    var peer by remember { mutableStateOf("") }
+    var sdp by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        // Звук входящего звонка (короткий повтор)
+        val ringtone = android.media.RingtoneManager.getRingtone(
+            ctx, android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE))
+        while (CallState.pendingOffer != null) {
+            ringtone?.play()
+            kotlinx.coroutines.delay(2000)
+            ringtone?.stop()
+            kotlinx.coroutines.delay(1000)
+            CallState.pendingOffer?.let { peer = it.first; sdp = it.second }
+        }
+    }
+    val offer = CallState.pendingOffer
+    Column(Modifier.fillMaxSize().background(t.bg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center) {
+        Avatar(offer?.first ?: peer)
+        Text("Входящий звонок", color = t.textDim, fontSize = 14.sp)
+        Text(offer?.first ?: peer, color = t.text, fontSize = 26.sp, modifier = Modifier.padding(top = 8.dp))
+        Text("DTLS-SRTP · медиа через наш TURN", color = t.textDim, fontSize = 11.sp,
+            modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(44.dp))
+        Row {
+            Button(
+                onClick = { onDecline(offer?.first ?: peer); CallState.pendingOffer = null },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE2574A)),
+                shape = CircleShape) { Text("Отклонить") }
+            Spacer(Modifier.width(20.dp))
+            Button(onClick = {
+                val p = offer?.first ?: peer; val s = offer?.second ?: sdp
+                CallState.pendingOffer = null
+                onAnswer(p, s)
+            }, shape = CircleShape) { Text("Ответить") }
         }
     }
 }

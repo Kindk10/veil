@@ -15,17 +15,28 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
+      - name: WebRTC framework (stasel prebuilt)
+        working-directory: client-ios
+        run: |
+          url=$(curl -s https://api.github.com/repos/stasel/WebRTC/releases/latest | python3 -c "import json,sys; assets=json.load(sys.stdin)['assets']; print(next(a['browser_download_url'] for a in assets if 'xcframework' in a['name']))")
+          curl -L -o webrtc.zip "$url"
+          unzip -q webrtc.zip
+          ls WebRTC.xcframework
+          cp -R WebRTC.xcframework/ios-simulator/WebRTC.framework .
+
       - name: Compile Swift sources into Veil.app (unsigned)
         working-directory: client-ios
         run: |
-          mkdir -p Veil.app
+          mkdir -p Veil.app/Frameworks
           swiftc \
             -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
             -target x86_64-apple-ios17.0-simulator \
-            -framework SwiftUI -framework UIKit \
+            -framework SwiftUI -framework UIKit -framework WebRTC \
+            -F . \
             -parse-as-library \
-            VeilApp.swift Envelope.swift CoverTraffic.swift Transport.swift VeilApi.swift SecureStorage.swift \
+            VeilApp.swift Envelope.swift VeilCall.swift CallView.swift CoverTraffic.swift Transport.swift VeilApi.swift SecureStorage.swift \
             -emit-executable -o Veil.app/Veil
+          cp -R WebRTC.framework Veil.app/Frameworks/
           cp Info.plist Veil.app/Info.plist
           ls -la Veil.app/
 

@@ -128,6 +128,9 @@ struct ChatsView: View {
     @State private var groupMembers: [String] = []
     @State private var newMember = ""
     @State private var openGroup: GroupInfo?
+    @State private var callPeer: String?
+    @State private var callOfferSdp: String?
+    @State private var incomingCall: (peer: String, sdp: String)?
 
     var body: some View {
         NavigationView {
@@ -140,6 +143,7 @@ struct ChatsView: View {
                         Button("←") { peerHash = nil }.foregroundColor(VeilGreen)
                         Text(query).font(.headline).foregroundColor(.white)
                         Spacer()
+                        Button("📞") { callPeer = hash; callOfferSdp = nil }.foregroundColor(VeilGreen)
                         Text("E2E").font(.caption).foregroundColor(VeilGreen)
                     }.padding()
                     ScrollView {
@@ -208,6 +212,34 @@ struct ChatsView: View {
             .sheet(isPresented: $groupSheet) {
                 newGroupSheet
             }
+            .fullScreenCover(isPresented: Binding(
+                get: { callPeer != nil }, set: { if !$0 { callPeer = nil; callOfferSdp = nil } })) {
+                if let p = callPeer {
+                    CallView(api: api, peer: p, answerSdp: callOfferSdp,
+                             onEnd: { callPeer = nil; callOfferSdp = nil })
+                }
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { incomingCall != nil }, set: { if !$0 { incomingCall = nil } })) {
+                if let inc = incomingCall {
+                    VStack(spacing: 20) {
+                        Spacer()
+                        Text("Входящий звонок").foregroundColor(.gray)
+                        Text(inc.peer).font(.largeTitle).foregroundColor(.white)
+                        Spacer()
+                        HStack(spacing: 24) {
+                            Button("Отклонить", role: .destructive) {
+                                Task { _ = await api.send(to: inc.peer, payload: VeilEnvelope.callEnd("declined")) }
+                                incomingCall = nil
+                            }
+                            Button("Ответить") {
+                                callPeer = inc.peer; callOfferSdp = inc.sdp; incomingCall = nil
+                            }
+                        }
+                        Spacer()
+                    }.background(VeilBg)
+                }
+            }
             .onChange(of: pickedItem) { item in
                 guard let item = item else { return }
                 Task {
@@ -217,6 +249,21 @@ struct ChatsView: View {
                         messages.append(SecureStorage.Message(dir: "out", peer: query, text: "🖼 [изображение \(data.count / 1024) КБ]"))
                     }
                     pickedItem = nil
+                }
+            }
+            .task {
+                // Фон-опрос реле: входящие звонки (call_offer / call_end).
+                while true {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard callPeer == nil, incomingCall == nil else { continue }
+                    guard let envs = try? await api.fetchAll() else { continue }
+                    for (from, payload) in envs {
+                        guard let o = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                              let type = o["type"] as? String else { continue }
+                        if type == MsgType.callOffer, let sdp = o["sdp"] as? String {
+                            incomingCall = (from, sdp)
+                        }
+                    }
                 }
             }
         }

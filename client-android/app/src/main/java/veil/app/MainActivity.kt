@@ -92,12 +92,13 @@ sealed class Screen {
     data class Chat(val peer: String) : Screen()
     data class Group(val gid: String) : Screen()
     object NewGroup : Screen()
-    data class Call(val peer: String, val video: Boolean = false) : Screen()
+    data class Call(val peer: String, val video: Boolean = false, val answerSdp: String? = null) : Screen()
     object Settings : Screen()
 }
 
 @Composable
 fun Root() {
+    val rootScope = rememberCoroutineScope()
     var screen by remember { mutableStateOf<Screen>(
         if (veil.core.SecureStorage.hasAccount(VeilApp.context!!)) Screen.Unlock
         else Screen.Onboarding) }
@@ -114,9 +115,39 @@ fun Root() {
             onCallVideo = { screen = Screen.Call(it, video = true) }) { screen = Screen.Chats }
         is Screen.Group -> GroupChatScreen(s.gid) { screen = Screen.Chats }
         is Screen.NewGroup -> NewGroupScreen { screen = Screen.Chats }
-        is Screen.Call -> CallScreen(s.peer, s.video) { screen = Screen.Chat(s.peer) }
+        is Screen.Call -> CallScreen(s.peer, s.video, s.answerSdp) { screen = Screen.Chat(s.peer) }
         is Screen.Settings -> SettingsScreen { screen = Screen.Chats }
     }
+
+    // Фон-опрос реле: входящие звонки (call_offer) и их отмена (call_end).
+    var incoming by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5000)
+            try {
+                VeilApp.api()?.fetch()?.forEach { (from, payload) ->
+                    val o = org.json.JSONObject(String(payload))
+                    when (o.optString("type")) {
+                        veil.core.MsgType.CALL_OFFER -> {
+                            if (CallState.activePeer == null) {
+                                CallState.pendingOffer = from to o.optString("sdp")
+                                incoming = true
+                            }
+                        }
+                        veil.core.MsgType.CALL_END -> {
+                            if (CallState.pendingOffer?.first == from) { CallState.pendingOffer = null; incoming = false }
+                        }
+                        else -> {} // обычные сообщения обрабатываются экранами чатов
+                    }
+                }
+            } catch (_: Exception) {}
+            if (CallState.pendingOffer == null) incoming = false
+        }
+    }
+    if (incoming) IncomingCallScreen(
+        onAnswer = { peer, sdp -> screen = Screen.Call(peer, answerSdp = sdp) },
+        onDecline = { peer -> rootScope.launch { VeilApp.api()?.send(peer,
+            veil.core.CallSignal.end("declined").toByteArray()) } })
 }
 
 // ---------- Онбординг: создаём PIN и аккаунт ----------
@@ -375,6 +406,21 @@ fun ChatScreen(peer: String, onCall: (String) -> Unit, onCallVideo: (String) -> 
         ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recording = !recording
     }
+    // Панель стикеров (эмодзи-пак «Стандартный»), реакции и пересылка — по тапу на пузырь.
+    var showStickers by remember { mutableStateOf(false) }
+    var actionTarget by remember { mutableStateOf<UiMsg?>(null) }
+    var fwdTo by remember { mutableStateOf("") }
+    val stickers = listOf("😀","😎","🥸","🤫","👀","🔥","💜","🫡","🤝","🕊","🛡","🥷","🕶","🧿","🌙","⚡")
+
+    fun sendJson(json: String, display: String, kind: String) {
+        messages = messages + listOf(UiMsg("out", display, kind))
+        scope.launch {
+            val ok = VeilApp.api()?.send(VeilApp.resolveId(peer), json.toByteArray()) ?: false
+            if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+        }
+        scope.launch { listState.animateScrollToItem(messages.size - 1) }
+    }
+
     // Кружок: фронтальная камера через TakePicturePreview (без FileProvider).
     val captureCircle = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicturePreview()) { bmp ->
@@ -446,12 +492,77 @@ fun ChatScreen(peer: String, onCall: (String) -> Unit, onCallVideo: (String) -> 
                     horizontalArrangement = if (m.dir == "out") Arrangement.End else Arrangement.Start) {
                     Box(Modifier.widthIn(max = 300.dp).background(
                         if (m.dir == "out") t.bubbleOut else t.surface2,
-                        RoundedCornerShape(14.dp)).padding(12.dp)) {
-                        Text(m.text, color = if (m.dir == "out") t.bubbleOutText else t.text,
-                            fontSize = 15.sp)
+                        RoundedCornerShape(14.dp)).padding(12.dp)
+                        .clickable { actionTarget = m }) {
+                        Text(m.text,
+                            color = if (m.dir == "out") t.bubbleOutText else t.text,
+                            fontSize = if (m.kind == veil.core.MsgType.STICKER) 44.sp else 15.sp)
                     }
                 }
             }
+        }
+        if (showStickers) {
+            Card(colors = CardDefaults.cardColors(containerColor = t.surface)) {
+                Column(Modifier.padding(10.dp)) {
+                    Text("Стикеры · пак «Стандартный»", color = t.textDim, fontSize = 12.sp)
+                    Row(Modifier.padding(top = 4.dp)) {
+                        stickers.take(8).forEach { e ->
+                            TextButton(onClick = {
+                                showStickers = false
+                                sendJson(veil.core.Envelope.sticker(e), e, veil.core.MsgType.STICKER)
+                            }) { Text(e, fontSize = 26.sp) }
+                        }
+                    }
+                    Row {
+                        stickers.drop(8).forEach { e ->
+                            TextButton(onClick = {
+                                showStickers = false
+                                sendJson(veil.core.Envelope.sticker(e), e, veil.core.MsgType.STICKER)
+                            }) { Text(e, fontSize = 26.sp) }
+                        }
+                    }
+                }
+            }
+        }
+        actionTarget?.let { target ->
+            AlertDialog(
+                onDismissRequest = { actionTarget = null },
+                title = { Text("Действия", color = t.text) },
+                containerColor = t.surface,
+                text = {
+                    Column {
+                        Row {
+                            listOf("❤","😂","👍","🔥","🫡").forEach { e ->
+                                TextButton(onClick = {
+                                    actionTarget = null
+                                    sendJson(veil.core.Envelope.reaction(
+                                        messages.indexOf(target), e), "${e} → «${target.text.take(20)}»",
+                                        veil.core.MsgType.REACTION)
+                                }) { Text(e, fontSize = 22.sp) }
+                            }
+                        }
+                        OutlinedTextField(value = fwdTo, onValueChange = { fwdTo = it },
+                            label = { Text("Переслать юзернейму", color = t.textDim) },
+                            modifier = Modifier.fillMaxWidth())
+                        Button(
+                            onClick = {
+                                val to = fwdTo.lowercase().trim(); fwdTo = ""; actionTarget = null
+                                scope.launch {
+                                    val id = VeilApp.api()?.lookup(to)?.idHash
+                                    if (id != null) {
+                                        VeilApp.prefs.edit().putString("id_$to", id).apply()
+                                        VeilApp.api()?.send(id,
+                                            veil.core.Envelope.forward(peer, target.text).toByteArray())
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            Text("Переслать")
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {})
         }
         Row(Modifier.fillMaxWidth().background(t.surface).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -470,6 +581,9 @@ fun ChatScreen(peer: String, onCall: (String) -> Unit, onCallVideo: (String) -> 
             TextButton(onClick = {
                 captureCircle.launch(null)
             }) { Text("⭕", fontSize = 20.sp, color = t.textDim) }
+            TextButton(onClick = { showStickers = !showStickers }) {
+                Text(if (showStickers) "✕" else "😊", fontSize = 20.sp, color = t.textDim)
+            }
             OutlinedTextField(
                 value = input, onValueChange = { input = it },
                 placeholder = { Text("Сообщение…", color = t.textDim) },

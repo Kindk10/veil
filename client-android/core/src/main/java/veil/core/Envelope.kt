@@ -19,6 +19,7 @@ object MsgType {
     const val CALL_ANSWER = "call_answer"
     const val CALL_ICE = "call_ice"
     const val CALL_END = "call_end"
+    const val STICKER = "sticker"
 }
 
 /** Группа: {gid, members[]} — отправка идёт каждому участнику отдельным E2E-конвертом. */
@@ -86,6 +87,15 @@ object Envelope {
             .put("type", type).put("name", name).put("parts", parts).put("part", index)
             .put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
             .toString()
+
+    fun sticker(emoji: String): String = JSONObject()
+        .put("type", MsgType.STICKER).put("body", emoji).toString()
+
+    fun reaction(target: Int, emoji: String): String = JSONObject()
+        .put("type", MsgType.REACTION).put("target", target).put("emoji", emoji).toString()
+
+    fun forward(from: String, body: String): String = JSONObject()
+        .put("type", MsgType.FORWARD).put("from", from).put("body", body).toString()
 
     fun poll(question: String, options: List<String>): String = JSONObject()
         .put("type", MsgType.POLL).put("q", question).put("opts", options).toString()

@@ -5,6 +5,8 @@
   CFBundleVersion = "0.1.0";
   CFBundleShortVersionString = "0.1.0";
   UILaunchScreen = {};
+  NSMicrophoneUsageDescription = "VEIL использует микрофон только для шифрованных звонков и голосовых сообщений.";
+  NSCameraUsageDescription = "VEIL использует камеру только для шифрованных кружков и видеозвонков.";
   UIApplicationSceneManifest = {
     UIApplicationSceneClassName = "UIWindowScene";
   };

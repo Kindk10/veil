@@ -102,6 +102,20 @@ final class VeilApi {
         return code == 204
     }
 
+    // Очередь конвертов: [(from, payload)] — /fetch, 200 → массив {from, payload}.
+    func fetchAll() async throws -> [(String, Data)] {
+        let (code, data) = try await signed(method: "GET", path: "/fetch", body: nil)
+        guard code == 200,
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+        return arr.compactMap { o in
+            guard let from = o["from"] as? String,
+                  let b64 = o["payload"] as? String,
+                  let payload = Data(base64Encoded: b64) else { return nil }
+            return (from, payload)
+        }
+    }
+
     private func signed(method: String, path: String, body: Data?) async throws -> (Int, Data) {
         let bh = SHA256.hash(data: body ?? Data())
         let msg = Data(method.utf8) + Data(path.utf8) + Data(bh)
