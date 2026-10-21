@@ -24,7 +24,7 @@ jobs:
             -target x86_64-apple-ios17.0-simulator \
             -framework SwiftUI -framework UIKit \
             -parse-as-library \
-            VeilApp.swift CoverTraffic.swift \
+            VeilApp.swift CoverTraffic.swift Transport.swift VeilApi.swift SecureStorage.swift \
             -emit-executable -o Veil.app/Veil
           cp Info.plist Veil.app/Info.plist
           ls -la Veil.app/
