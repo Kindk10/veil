@@ -29,7 +29,7 @@ final class Transport {
         return ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 
-    private func pinnedSession() -> URLSession {
+    func pinnedSession() -> URLSession {
         let delegate = PinDelegate(fp: relayFingerprint)
         let conf = URLSessionConfiguration.default
         conf.requestCachePolicy = .reloadIgnoringLocalCacheData
