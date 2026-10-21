@@ -1,6 +1,14 @@
 import SwiftUI
 import WebRTC
 
+// UIViewRepresentable-обёртки RTCMTLVideoView (UIView) для SwiftUI.
+
+struct RTCVideoContainer: UIViewRepresentable {
+    let view: RTCMTLVideoView
+    func makeUIView(context: Context) -> RTCMTLVideoView { view }
+    func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {}
+}
+
 // Экран звонка iOS: аудио + видео (включаемая кнопка), TURN-only.
 
 struct CallView: View {
@@ -19,9 +27,11 @@ struct CallView: View {
         VStack(spacing: 16) {
             if videoOn {
                 ZStack(alignment: .topTrailing) {
-                    Group { remoteView }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RTCVideoContainer(view: remoteView)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.black)
-                    Group { localView }.frame(width: 110, height: 160).padding(12)
+                    RTCVideoContainer(view: localView)
+                        .frame(width: 110, height: 160).padding(12)
                 }
             } else {
                 Spacer()
@@ -48,7 +58,7 @@ struct CallView: View {
             let call = VeilCall(api: api, peerHash: peer)
             self.call = call
             call.onStateChange = { st in DispatchQueue.main.async { state = st } }
-            var cfg = RTCConfiguration()
+            let cfg = RTCConfiguration()
             if call.connect(config: cfg) {
                 if let answer = answerSdp {
                     call.acceptOffer(answer)
