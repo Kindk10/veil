@@ -22,7 +22,7 @@ jobs:
           curl -L -o webrtc.zip "$url"
           unzip -q webrtc.zip
           ls WebRTC.xcframework
-          cp -R WebRTC.xcframework/ios-simulator/WebRTC.framework .
+          cp -R WebRTC.xcframework/ios-x86_64_arm64-simulator/WebRTC.framework .
 
       - name: Compile Swift sources into Veil.app (unsigned)
         working-directory: client-ios
