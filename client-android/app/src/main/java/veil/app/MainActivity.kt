@@ -92,7 +92,7 @@ sealed class Screen {
     data class Chat(val peer: String) : Screen()
     data class Group(val gid: String) : Screen()
     object NewGroup : Screen()
-    data class Call(val peer: String) : Screen()
+    data class Call(val peer: String, val video: Boolean = false) : Screen()
     object Settings : Screen()
 }
 
@@ -109,10 +109,12 @@ fun Root() {
             onOpenGroup = { screen = Screen.Group(it) },
             onNewGroup = { screen = Screen.NewGroup },
             onSettings = { screen = Screen.Settings })
-        is Screen.Chat -> ChatScreen(s.peer, onCall = { screen = Screen.Call(it) }) { screen = Screen.Chats }
+        is Screen.Chat -> ChatScreen(s.peer,
+            onCall = { screen = Screen.Call(it) },
+            onCallVideo = { screen = Screen.Call(it, video = true) }) { screen = Screen.Chats }
         is Screen.Group -> GroupChatScreen(s.gid) { screen = Screen.Chats }
         is Screen.NewGroup -> NewGroupScreen { screen = Screen.Chats }
-        is Screen.Call -> CallScreen(s.peer) { screen = Screen.Chat(s.peer) }
+        is Screen.Call -> CallScreen(s.peer, s.video) { screen = Screen.Chat(s.peer) }
         is Screen.Settings -> SettingsScreen { screen = Screen.Chats }
     }
 }
@@ -325,7 +327,7 @@ fun ChatsScreen(onOpen: (String) -> Unit, onOpenGroup: (String) -> Unit, onNewGr
 data class UiMsg(val dir: String, val text: String, val kind: String = veil.core.MsgType.TEXT, val name: String? = null)
 
 @Composable
-fun ChatScreen(peer: String, onCall: (String) -> Unit, onBack: () -> Unit) {
+fun ChatScreen(peer: String, onCall: (String) -> Unit, onCallVideo: (String) -> Unit, onBack: () -> Unit) {
     val t = VeilThemes.current
     var messages by remember { mutableStateOf(listOf(
         UiMsg("in", "Соединение установлено. Конец-в-конец шифрование активно."))) }
@@ -432,6 +434,9 @@ fun ChatScreen(peer: String, onCall: (String) -> Unit, onBack: () -> Unit) {
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { onCall(peer) }) {
                 Text("📞", fontSize = 20.sp, color = t.accent)
+            }
+            IconButton(onClick = { onCallVideo(peer) }) {
+                Text("📹", fontSize = 20.sp, color = t.accent)
             }
         }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 10.dp), state = listState) {
