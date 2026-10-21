@@ -47,7 +47,11 @@ final class VeilCall: NSObject, RTCPeerConnectionDelegate {
                 .first(where: { $0.position == .front }) ?? RTCCameraVideoCapturer.captureDevices().first
         else { return nil }
         let format = RTCCameraVideoCapturer.supportedFormats(for: device)
-            .last { f in CMTimeGetSeconds(f.videoSupportedFrameRateRanges.first!.frameDuration) <= 1.0 / 15.0 }
+            .last { f in
+                f.videoSupportedFrameRateRanges.first.map {
+                    CMTimeGetSeconds($0.minFrameDuration) <= 1.0 / 15.0
+                } ?? false
+            }
         guard let fmt = format, let fps = fmt.videoSupportedFrameRateRanges.first?.maximumFrameRate else { return nil }
         capturer.startCapture(with: device, format: fmt, fps: Int(min(fps, 15)))
         let track = factory.videoTrack(with: videoSource, trackId: "v0")
@@ -116,7 +120,7 @@ final class VeilCall: NSObject, RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
         if let video = stream.videoTracks.first { remoteVideoTrack = video }
     }
-    func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOnTransceiver transceiver: RTCRtpTransceiver) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange state: RTCSignalingState) {}
