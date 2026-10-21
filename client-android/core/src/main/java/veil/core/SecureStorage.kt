@@ -53,6 +53,11 @@ class SecureStorage private constructor(private val appCtx: Context, dbKey: Byte
         private const val SALT_LEN = 32
         private const val KEY_LEN = 32
 
+        // Есть ли уже созданный аккаунт (по метке-обёртке ключа).
+        fun hasAccount(context: Context): Boolean =
+            context.getSharedPreferences("veil_meta", Context.MODE_PRIVATE)
+                .getString("wrapped_key", null) != null
+
         // Первый запуск: создаём случайный ключ БД и обёртку из PIN.
         // Возвраты: null — неверный PIN; объект — успех.
         // 5 неверных попыток подряд → ПАНИЧЕСКОЕ СТИРАНИЕ: локальная БД,

@@ -4,6 +4,8 @@ package veil.core
 // 1) Первый запуск: создаются ключи, регистрация на реле, задаётся PIN.
 // 2) Повторный запуск: разблокировка PIN → загрузка ключей из SQLCipher.
 
+import com.google.crypto.tink.subtle.Ed25519Sign
+import org.whispersystems.curve25519.Curve25519
 import veil.net.Transport
 
 class VeilInit(
@@ -21,6 +23,7 @@ class VeilInit(
     suspend fun firstLaunch(pin: CharArray, username: String?): Result<Ready> {
         val store = SecureStorage.open(context, pin)
             ?: return Result.failure(IllegalStateException("не удалось открыть хранилище"))
+        pendingStore = store
         val id = Identity(store)
         val bundle = id.createNew()
         val idHash = bundle.idHash
@@ -63,15 +66,9 @@ class VeilInit(
     private fun generateSpk(): ByteArray {
         // Signed prekey: X25519-пара, приватная часть — в хранилище.
         val pair = X25519.generate()
-        storeSpk(pair)
-        return pair.pub
-    }
-
-    private fun storeSpk(pair: X25519.KeyPair) {
-        // Обращение к хранилищу выполняется инициализатором через поле,
-        // задаваемое в firstLaunch/unlock (упрощение для каркаса).
         pendingStore?.put("spk_priv", pair.priv)
         pendingStore?.put("spk_pub", pair.pub)
+        return pair.pub
     }
 
     private var pendingStore: SecureStorage? = null
@@ -84,15 +81,25 @@ class VeilInit(
         }
 }
 
-// Обёртки над примитивами. В каркасе — чистая Kotlin-реализация;
-// при сборке заменяются на вызовы libsignal/BoringSSL (нативный JNI),
-// чтобы пройти независимый аудит криптопримитивов.
+// Реальные криптопримитивы (не заглушки): Ed25519 — Google Tink (subtle),
+// X25519 — curve25519-android (Curve25519.BEST).
+
 object X25519 {
     class KeyPair(val pub: ByteArray, val priv: ByteArray)
-    fun generate(): KeyPair = throw NotImplementedError("подключается на этапе сборки через libsignal")
+    fun generate(): KeyPair {
+        val kp = Curve25519.getInstance(Curve25519.BEST).generateKeyPair()
+        return KeyPair(kp.publicKey, kp.privateKey)
+    }
+    fun agree(priv: ByteArray, peerPub: ByteArray): ByteArray =
+        Curve25519.getInstance(Curve25519.BEST).calculateAgreement(peerPub, priv)
 }
 
 object Ed25519 {
-    fun sign(msg: ByteArray, priv: ByteArray): ByteArray =
-        throw NotImplementedError("подключается на этапе сборки через libsignal")
+    fun sign(msg: ByteArray, seed: ByteArray): ByteArray =
+        Ed25519Sign(seed).sign(msg)
+
+    fun keyPair(): Pair<ByteArray, ByteArray> {
+        val kp = Ed25519Sign.KeyPair.newKeyPair()
+        return kp.privateKey to kp.publicKey
+    }
 }

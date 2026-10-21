@@ -17,6 +17,8 @@ android {
 dependencies {
     implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("org.whispersystems:signal-protocol-android:2.8.1")
+    implementation("org.whispersystems:curve25519-android:0.5.0")
+    implementation("com.google.crypto.tink:tink-android:1.16.0")
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
