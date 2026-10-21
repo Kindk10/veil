@@ -17,6 +17,10 @@ import javax.crypto.spec.SecretKeySpec
 
 class SecureStorage private constructor(private val appCtx: Context, dbKey: ByteArray) : SecureStore {
 
+    init {
+        SQLiteDatabase.loadLibs(appCtx)
+    }
+
     private val helper = object : SQLiteOpenHelper(appCtx, DB_NAME, null, DB_VERSION) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB NOT NULL)")

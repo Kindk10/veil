@@ -125,7 +125,10 @@ fun Root() {
         while (true) {
             kotlinx.coroutines.delay(5000)
             try {
-                VeilApp.api()?.fetch()?.forEach { (from, payload) ->
+                val envelopes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    VeilApp.api()?.fetch()
+                } ?: emptyList()
+                envelopes.forEach { (from, payload) ->
                     val o = org.json.JSONObject(String(payload))
                     when (o.optString("type")) {
                         veil.core.MsgType.CALL_OFFER -> {
@@ -193,12 +196,19 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     pin != confirm -> error = "PIN не совпадает"
                     else -> {
                         busy = true
-                        scope.launch {
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val init = veil.core.VeilInit(VeilApp.context!!)
                             val res = init.firstLaunch(pin.toCharArray(), username.ifBlank { null })
-                            busy = false
-                            if (res.isSuccess) onDone()
-                            else error = res.exceptionOrNull()?.message
+                            scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                busy = false
+                                if (res.isSuccess) {
+                                    res.getOrNull()?.let {
+                                        VeilApp.readyApi = it.api
+                                        VeilApp.sessionStore = it.store
+                                    }
+                                    onDone()
+                                } else error = res.exceptionOrNull()?.message
+                            }
                         }
                     }
                 }
@@ -216,6 +226,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
 fun UnlockScreen(onUnlock: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
         Text("VEIL", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = VeilGreen)
         Spacer(Modifier.height(24.dp))
@@ -228,8 +239,17 @@ fun UnlockScreen(onUnlock: () -> Unit) {
         if (error) Text("Неверный PIN", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
         Spacer(Modifier.height(16.dp))
         Button(onClick = {
-            val store = veil.core.SecureStorage.open(VeilApp.context!!, pin.toCharArray())
-            if (store != null) { VeilApp.sessionStore = store; onUnlock() } else error = true
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val store = veil.core.SecureStorage.open(VeilApp.context!!, pin.toCharArray())
+                val ready = if (store != null) veil.core.VeilInit(VeilApp.context!!).unlock(pin.toCharArray()) else null
+                scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    if (ready != null) {
+                        VeilApp.readyApi = ready.api
+                        VeilApp.sessionStore = ready.store
+                        onUnlock()
+                    } else error = true
+                }
+            }
         }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Разблокировать") }
     }
 }
@@ -720,6 +740,8 @@ object VeilApp {
     @Volatile var context: android.content.Context? = null
     @Volatile var sessionStore: veil.core.SecureStorage? = null
     @Volatile var session: veil.core.Session? = null
+    // API текущей сессии: создаётся при разблокировке/онбординге (ключи из хранилища).
+    @Volatile var readyApi: veil.core.VeilApi? = null
 
     val prefs: android.content.SharedPreferences
         get() = context!!.getSharedPreferences("veil_ui", android.content.Context.MODE_PRIVATE)
@@ -727,13 +749,5 @@ object VeilApp {
     fun resolveId(username: String): String =
         prefs.getString("id_$username", "") ?: ""
 
-    fun api(): veil.core.VeilApi? {
-        val s = sessionStore ?: return null
-        return veilInit?.apiFor(s)
-    }
-    @Volatile var veilInit: VeilInit? = null
-}
-
-interface VeilInit {
-    fun apiFor(store: veil.core.SecureStorage): veil.core.VeilApi
+    fun api(): veil.core.VeilApi? = readyApi
 }
