@@ -18,13 +18,15 @@ jobs:
       - name: Compile Swift sources into Veil.app (unsigned)
         working-directory: client-ios
         run: |
+          mkdir -p Veil.app
           swiftc \
             -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
             -target x86_64-apple-ios17.0-simulator \
+            -framework SwiftUI -framework UIKit \
+            -parse-as-library \
             VeilApp.swift CoverTraffic.swift \
             -emit-executable -o Veil.app/Veil
           cp Info.plist Veil.app/Info.plist
-          mkdir -p Veil.app
           ls -la Veil.app/
 
       - name: Package IPA (unsigned)
