@@ -7,6 +7,9 @@ package veil.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,14 +46,38 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ---------- Темы (локальные, серверу невидимы) ----------
+
+object VeilThemes {
+    data class ThemeColors(
+        val name: String, val bg: Color, val surface: Color, val surface2: Color,
+        val text: Color, val textDim: Color, val accent: Color, val bubbleOut: Color, val bubbleOutText: Color)
+
+    val list = listOf(
+        ThemeColors("Тьма", Color(0xFF0B0F0D), Color(0xFF121A16), Color(0xFF1A2420),
+            Color(0xFFD7E2DC), Color(0xFF7C8B83), Color(0xFF4AE28B), Color(0xFF4AE28B), Color(0xFF06130B)),
+        ThemeColors("Ночь", Color(0xFF0A0A12), Color(0xFF12121E), Color(0xFF1B1B2E),
+            Color(0xFFD8D8E8), Color(0xFF7B7B90), Color(0xFF8B7BF5), Color(0xFF8B7BF5), Color(0xFF0F0F18)),
+        ThemeColors("Уголь", Color(0xFF101010), Color(0xFF1A1A1A), Color(0xFF242424),
+            Color(0xFFE0E0E0), Color(0xFF8A8A8A), Color(0xFFD0A85C), Color(0xFFD0A85C), Color(0xFF161310))
+    )
+
+    var index: Int
+        get() = VeilApp.prefs.getInt("theme", 0)
+        set(v) { VeilApp.prefs.edit().putInt("theme", v).apply() }
+
+    val current get() = list[index.coerceIn(0, list.size - 1)]
+}
+
 @Composable
 fun VeilTheme(content: @Composable () -> Unit) {
+    val t = VeilThemes.current
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = VeilGreen, onPrimary = Color(0xFF06130B),
-            background = VeilBg, onBackground = VeilText,
-            surface = VeilSurface, onSurface = VeilText,
-            surfaceVariant = VeilSurface2, error = Color(0xFFE2574A)
+            primary = t.accent, onPrimary = t.bubbleOutText,
+            background = t.bg, onBackground = t.text,
+            surface = t.surface, onSurface = t.text,
+            surfaceVariant = t.surface2, error = Color(0xFFE2574A)
         ),
         content = content
     )
@@ -267,58 +294,97 @@ fun ChatsScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
 
 // ---------- Экран чата ----------
 
+data class UiMsg(val dir: String, val text: String, val kind: String = veil.core.MsgType.TEXT, val name: String? = null)
+
 @Composable
 fun ChatScreen(peer: String, onBack: () -> Unit) {
+    val t = VeilThemes.current
     var messages by remember { mutableStateOf(listOf(
-        Pair("in", "Соединение установлено. Конец-в-конец шифрование активно."))) }
+        UiMsg("in", "Соединение установлено. Конец-в-конец шифрование активно."))) }
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    Column(Modifier.fillMaxSize().background(VeilBg)) {
-        // Шапка
-        Row(verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().background(VeilSurface).padding(10.dp)) {
-            TextButton(onClick = onBack) { Text("←", color = VeilGreen, fontSize = 22.sp) }
-            Avatar(peer)
-            Column(Modifier.padding(start = 10.dp)) {
-                Text(peer, color = VeilText, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                Text("E2E · Double Ratchet", color = VeilGreen, fontSize = 11.sp)
+    // Прикрепление фото/файла (SAF): читаем байты, шифруем, чанкуем.
+    val pickMedia = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            val bytes = VeilApp.context!!.contentResolver.openInputStream(uri)?.readBytes()
+            if (bytes != null) {
+                val name = "photo.jpg"
+                val json = veil.core.Envelope.media(veil.core.MsgType.IMAGE, name, bytes)
+                messages = messages + listOf(UiMsg("out", "🖼 [изображение ${bytes.size / 1024} КБ]", veil.core.MsgType.IMAGE, name))
+                scope.launch {
+                    val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                    if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+                }
             }
         }
-        // Сообщения
+    }
+    val pickFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val bytes = VeilApp.context!!.contentResolver.openInputStream(uri)?.readBytes()
+            if (bytes != null) {
+                val name = uri.lastPathSegment ?: "file"
+                val json = veil.core.Envelope.media(veil.core.MsgType.FILE, name, bytes)
+                messages = messages + listOf(UiMsg("out", "📎 [файл ${bytes.size / 1024} КБ]", veil.core.MsgType.FILE, name))
+                scope.launch {
+                    val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                    if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла"))
+                }
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(t.bg)) {
+        Row(verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().background(t.surface).padding(10.dp)) {
+            TextButton(onClick = onBack) { Text("←", color = t.accent, fontSize = 22.sp) }
+            Avatar(peer)
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(peer, color = t.text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("E2E · Double Ratchet", color = t.accent, fontSize = 11.sp)
+            }
+        }
         LazyColumn(Modifier.weight(1f).padding(horizontal = 10.dp), state = listState) {
             items(messages.size) { i ->
-                val (dir, text) = messages[i]
+                val m = messages[i]
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = if (dir == "out") Arrangement.End else Arrangement.Start) {
+                    horizontalArrangement = if (m.dir == "out") Arrangement.End else Arrangement.Start) {
                     Box(Modifier.widthIn(max = 300.dp).background(
-                        if (dir == "out") VeilGreen else VeilSurface2,
+                        if (m.dir == "out") t.bubbleOut else t.surface2,
                         RoundedCornerShape(14.dp)).padding(12.dp)) {
-                        Text(text, color = if (dir == "out") Color(0xFF06130B) else VeilText,
+                        Text(m.text, color = if (m.dir == "out") t.bubbleOutText else t.text,
                             fontSize = 15.sp)
                     }
                 }
             }
         }
-        // Ввод
-        Row(Modifier.fillMaxWidth().background(VeilSurface).padding(8.dp),
+        Row(Modifier.fillMaxWidth().background(t.surface).padding(8.dp),
             verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { pickMedia.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                Text("🖼", fontSize = 20.sp, color = t.textDim)
+            }
+            TextButton(onClick = {
+                pickFile.launch(arrayOf("*/*"))
+            }) { Text("📎", fontSize = 20.sp, color = t.textDim) }
             OutlinedTextField(
                 value = input, onValueChange = { input = it },
-                placeholder = { Text("Сообщение…", color = VeilTextDim) },
+                placeholder = { Text("Сообщение…", color = t.textDim) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(24.dp))
             Spacer(Modifier.width(6.dp))
             Button(
                 onClick = {
                     if (input.isNotBlank()) {
-                        messages = messages + listOf("out" to input)
-                        val sent = input
+                        messages = messages + listOf(UiMsg("out", input))
+                        val json = veil.core.Envelope.text(input)
                         input = ""
                         scope.launch {
-                            val ok = VeilApp.api()?.send("", sent.toByteArray()) ?: false
-                            if (!ok) messages = messages + listOf("in" to "⚠ доставка не прошла (проверьте транспорт)")
+                            val ok = VeilApp.api()?.send("", json.toByteArray()) ?: false
+                            if (!ok) messages = messages + listOf(UiMsg("in", "⚠ доставка не прошла (проверьте транспорт)"))
                         }
                         scope.launch { listState.animateScrollToItem(messages.size - 1) }
                     }
@@ -339,6 +405,25 @@ fun SettingsScreen(onBack: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("←", color = VeilGreen, fontSize = 22.sp) }
             Text("Настройки", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = VeilText)
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Card(colors = CardDefaults.cardColors(containerColor = VeilSurface)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Темы", color = VeilText, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.padding(top = 8.dp)) {
+                    VeilThemes.list.forEachIndexed { i, th ->
+                        OutlinedButton(
+                            onClick = { VeilThemes.index = i },
+                            modifier = Modifier.padding(end = 6.dp)) {
+                            Text(if (VeilThemes.index == i) "● ${th.name}" else th.name,
+                                color = if (VeilThemes.index == i) th.accent else VeilText)
+                        }
+                    }
+                }
+                Text("Тема применяется сразу, хранится только на устройстве.",
+                    color = VeilTextDim, fontSize = 12.sp)
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -397,6 +482,9 @@ object VeilApp {
     @Volatile var context: android.content.Context? = null
     @Volatile var sessionStore: veil.core.SecureStorage? = null
     @Volatile var session: veil.core.Session? = null
+
+    val prefs: android.content.SharedPreferences
+        get() = context!!.getSharedPreferences("veil_ui", android.content.Context.MODE_PRIVATE)
 
     fun api(): veil.core.VeilApi? {
         val s = sessionStore ?: return null
