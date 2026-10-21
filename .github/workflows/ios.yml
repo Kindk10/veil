@@ -1,0 +1,40 @@
+name: iOS build (IPA на macOS-раннере)
+
+on:
+  push:
+    branches: [master]
+    paths: ["client-ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Compile Swift sources into Veil.app (unsigned)
+        working-directory: client-ios
+        run: |
+          swiftc \
+            -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
+            -target x86_64-apple-ios17.0-simulator \
+            VeilApp.swift CoverTraffic.swift \
+            -emit-executable -o Veil.app/Veil
+          cp Info.plist Veil.app/Info.plist
+          mkdir -p Veil.app
+          ls -la Veil.app/
+
+      - name: Package IPA (unsigned)
+        run: |
+          mkdir -p Payload
+          cp -r client-ios/Veil.app Payload/
+          zip -r Veil-unsigned.ipa Payload
+          ls -la Veil-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Veil-iOS-unsigned
+          path: Veil-unsigned.ipa

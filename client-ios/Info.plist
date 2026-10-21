@@ -1,0 +1,11 @@
+// Info.plist для сборки Veil.app на CI
+{
+  CFBundleName = "VEIL";
+  CFBundleIdentifier = "app.veil.ios";
+  CFBundleVersion = "0.1.0";
+  CFBundleShortVersionString = "0.1.0";
+  UILaunchScreen = {};
+  UIApplicationSceneManifest = {
+    UIApplicationSceneClassName = "UIWindowScene";
+  };
+}
