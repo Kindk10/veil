@@ -94,6 +94,6 @@ class VeilApi(
     companion object {
         fun idHashOf(identityPub: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(identityPub)
-                .joinToString("") { "%02x".format(it) }.take(32)
+                .joinToString("") { "%02x".format(it) } // полный hex, 64 символа
     }
 }

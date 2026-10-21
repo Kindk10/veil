@@ -21,11 +21,11 @@ class Identity(val db: SecureStore) {
     private fun sha256(b: ByteArray): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(b)
 
-    // ID = Base58(SHA-256(public identity key))[:16] — генерируется из ключа,
-    // не выдаётся сервером. Сервер хранит только хеш.
+    // ID = hex(SHA-256(public identity key)) — полный 64-символьный хеш,
+    // генерируется из ключа, не выдаётся сервером.
     fun generateIdHash(identityKey: ByteArray): String {
         val h = sha256(identityKey)
-        return h.joinToString("") { "%02x".format(it) }.take(32)
+        return h.joinToString("") { "%02x".format(it) }
     }
 
     // Полная генерация при первом запуске. Вызывается ровно один раз;
