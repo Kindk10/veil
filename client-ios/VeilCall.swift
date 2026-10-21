@@ -52,7 +52,8 @@ final class VeilCall: NSObject, RTCPeerConnectionDelegate {
                     CMTimeGetSeconds($0.minFrameDuration) <= 1.0 / 15.0
                 } ?? false
             }
-        guard let fmt = format, let fps = fmt.videoSupportedFrameRateRanges.first?.maximumFrameRate else { return nil }
+        guard let fmt = format else { return nil }
+        let fps = fmt.videoSupportedFrameRateRanges.first.map { Float($0.maxFrameRate) } ?? 15.0
         capturer.startCapture(with: device, format: fmt, fps: Int(min(fps, 15)))
         let track = factory.videoTrack(with: videoSource, trackId: "v0")
         pc?.add(track, streamIds: ["s0"])
